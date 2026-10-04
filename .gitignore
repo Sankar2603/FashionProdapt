@@ -1,0 +1,15 @@
+.env
+*.jsonl
+data/
+
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+*.egg-info/

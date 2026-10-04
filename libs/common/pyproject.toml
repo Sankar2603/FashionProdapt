@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fashion-common"
+version = "0.1.0"
+description = "Shared code for the fashion search services"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0,<2.1",
+    "psycopg[binary]>=3.2,<3.3",
+    "qdrant-client>=1.19,<1.20",
+]
+
+[tool.setuptools]
+packages = ["fashion_common"]
