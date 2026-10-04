@@ -1,3 +1,14 @@
+"""
+Qdrant helpers shared by the indexer, the Retrieval Service and the worker.
+
+Each product is one Qdrant point:
+    id      = uuid5(parent_asin)      (Qdrant ids must be UUIDs or integers)
+    vectors = {"dense": [...1024...], "sparse": {indices, values}}
+    payload = product fields (title, price, bayesian_score, is_deleted, ...)
+
+Services always search the alias (fashion_items_active), never a versioned
+collection name, so a new collection can be swapped in without code changes.
+"""
 
 import os
 import uuid
@@ -122,23 +133,26 @@ def search(
     limit: int = 20,
     max_price: float | None = None,
     mode: str = "hybrid",
+    with_vectors: bool = False,
 ) -> list[models.ScoredPoint]:
     """
     mode = "hybrid": dense search + sparse search, fused with RRF (inside Qdrant)
     mode = "dense" or "sparse": one kind only (useful for comparing)
+    with_vectors = True also returns each hit's dense vector (used for MMR).
     """
     query_filter = build_filter(max_price)
+    vectors = [DENSE] if with_vectors else False
     sparse_query = models.SparseVector(indices=encoded.sparse_indices, values=encoded.sparse_values)
 
     if mode == "dense":
         result = client.query_points(
             collection, query=encoded.dense, using=DENSE,
-            query_filter=query_filter, limit=limit, with_payload=True,
+            query_filter=query_filter, limit=limit, with_payload=True, with_vectors=vectors,
         )
     elif mode == "sparse":
         result = client.query_points(
             collection, query=sparse_query, using=SPARSE,
-            query_filter=query_filter, limit=limit, with_payload=True,
+            query_filter=query_filter, limit=limit, with_payload=True, with_vectors=vectors,
         )
     elif mode == "hybrid":
         # Each prefetch gathers candidates with the SAME filter; RRF merges the two rankings.
@@ -152,6 +166,7 @@ def search(
             query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=limit,
             with_payload=True,
+            with_vectors=vectors,
         )
     else:
         raise ValueError(f"Unknown mode: {mode!r} (use hybrid, dense or sparse)")

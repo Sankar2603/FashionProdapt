@@ -1,0 +1,22 @@
+# Optional: run the reranker on an NVIDIA GPU (Docker Desktop + WSL2 on Windows).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build rerank
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d rerank
+#
+# TORCH_INDEX_URL must match a CUDA version your driver supports
+# (nvidia-smi shows "CUDA Version: X.Y" top right): cu126 needs >= 12.6, cu128 >= 12.8.
+
+services:
+  rerank:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
+    environment:
+      RERANKER_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

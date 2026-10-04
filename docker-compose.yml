@@ -1,4 +1,7 @@
+# Fashion search: infrastructure + services.
+
 services:
+  # ---------------------------------------------------------------- infra
   redis:
     image: redis:7.4-alpine
     container_name: fs-redis
@@ -17,12 +20,13 @@ services:
     image: qdrant/qdrant:v1.19.1
     container_name: fs-qdrant
     ports:
-      - "127.0.0.1:6333:6333"   
-      - "127.0.0.1:6334:6334"   
+      - "127.0.0.1:6333:6333"   # REST API + web dashboard
+      - "127.0.0.1:6334:6334"   # gRPC API
     volumes:
       - qdrant_data:/qdrant/storage
-    environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    # To require an API key (e.g. when deploying), uncomment and set QDRANT_API_KEY in .env:
+    # environment:
+    #   QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     healthcheck:
       test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 5s
@@ -48,7 +52,87 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # ------------------------------------------------------------- services
+  query:
+    build:
+      context: .
+      dockerfile: services/query_service/Dockerfile
+    container_name: fs-query
+    env_file: .env
+    environment:
+      # Inside the Docker network, services reach each other by name.
+      REDIS_URL: redis://redis:6379/0
+      # Only used when LLM_PROVIDER=ollama (Ollama running on your Windows host).
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  retrieval:
+    build:
+      context: .
+      dockerfile: services/retrieval_service/Dockerfile
+    container_name: fs-retrieval
+    env_file: .env
+    environment:
+      # Inside the Docker network, services reach each other by name.
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_DEVICE: cpu
+      HF_HOME: /hf-cache
+      # 0 = download the model if it's missing (first start on a new machine).
+      # Set HF_HUB_OFFLINE=1 in .env when HF_CACHE_DIR points at an existing cache.
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    volumes:
+      # HF_CACHE_DIR set in .env -> reuse that host folder (no re-download).
+      # Not set -> Docker volume "hf_cache"; the model downloads into it once.
+      - ${HF_CACHE_DIR:-hf_cache}:/hf-cache
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 300s   # first start may download the model (~2.3 GB)
+    restart: unless-stopped
+
+  rerank:
+    build:
+      context: .
+      dockerfile: services/rerank_service/Dockerfile
+    container_name: fs-rerank
+    env_file: .env
+    environment:
+      RERANKER_DEVICE: cpu
+      HF_HOME: /hf-cache
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    volumes:
+      # Same model cache as retrieval: both models live side by side in it.
+      - ${HF_CACHE_DIR:-hf_cache}:/hf-cache
+    ports:
+      - "127.0.0.1:8004:8004"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 300s   # first start may download the model (~2.3 GB)
+    restart: unless-stopped
+
 volumes:
   redis_data:
   qdrant_data:
   postgres_data:
+  hf_cache:

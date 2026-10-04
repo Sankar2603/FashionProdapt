@@ -1,0 +1,12 @@
+# Keep the Docker build context small: never send these to the builder.
+*.jsonl
+data/
+venv/
+.venv/
+.git/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+.env
+.vscode/
+.idea/

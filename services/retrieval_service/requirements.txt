@@ -1,0 +1,5 @@
+# PyTorch (CPU build) is installed separately in the Dockerfile.
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
+FlagEmbedding==1.4.2
+qdrant-client==1.19.1
