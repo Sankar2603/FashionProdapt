@@ -1,3 +1,15 @@
+"""
+Deterministic parts of query parsing (no LLM).
+Shared: the Query Service uses it, and the Gateway uses it as a fallback
+when the Query Service is unavailable.
+
+extract_price(): finds a maximum price in the query ("under $40", "below 40
+dollars", "por menos de $40", "$40 से कम") and returns it with the price phrase
+removed from the text. Code owns numbers; the LLM never does.
+
+rule_parse(): the fallback used when the LLM is unavailable. It searches with
+the user's own words minus the price phrase.
+"""
 
 import re
 

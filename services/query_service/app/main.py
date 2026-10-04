@@ -15,11 +15,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
+from fashion_common.query_rules import extract_price, rule_parse
 from fashion_common.service_app import create_app
 
 from app.cache import IntentCache, cache_key
 from app.llm import PROMPT_VERSION, build_llm, run_llm
-from app.rules import extract_price, rule_parse
 from app.schemas import ParseRequest, ParseResponse
 
 SERVICE_NAME = "query_service"

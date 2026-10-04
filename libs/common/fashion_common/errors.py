@@ -1,3 +1,13 @@
+"""
+One error format for every service:
+
+    {"error": {"code": "...", "message": "...", "correlation_id": "...", "details": ...}}
+
+Raise ServiceError(status_code, code, message) for expected failures
+(e.g. a dependency is down). Validation errors and unexpected exceptions are
+converted to the same format by the handlers below.
+"""
+
 import logging
 
 from fastapi import FastAPI, Request
@@ -12,28 +22,31 @@ logger = logging.getLogger("fashion_common.errors")
 
 
 class ServiceError(Exception):
-    def __init__(self, status_code: int, code: str, message: str, details=None):
+    def __init__(self, status_code: int, code: str, message: str, details=None,
+                 headers: dict[str, str] | None = None):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details
+        self.headers = headers or {}
 
 
-def error_response(status_code: int, code: str, message: str, details=None) -> JSONResponse:
+def error_response(status_code: int, code: str, message: str, details=None,
+                   headers: dict[str, str] | None = None) -> JSONResponse:
     correlation_id = get_correlation_id()
     body = {"error": {"code": code, "message": message, "correlation_id": correlation_id}}
     if details is not None:
         body["error"]["details"] = jsonable_encoder(details)
     return JSONResponse(status_code=status_code, content=body,
-                        headers={CORRELATION_HEADER: correlation_id})
+                        headers={CORRELATION_HEADER: correlation_id, **(headers or {})})
 
 
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ServiceError)
     async def handle_service_error(request: Request, exc: ServiceError):
         logger.warning("service error", extra={"code": exc.code, "error": exc.message})
-        return error_response(exc.status_code, exc.code, exc.message, exc.details)
+        return error_response(exc.status_code, exc.code, exc.message, exc.details, exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError):
