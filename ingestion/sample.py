@@ -1,3 +1,25 @@
+"""
+Builds a small development dataset from the full Amazon Fashion files.
+
+Pass 1 reads the metadata file line by line and keeps products that:
+  - are valid JSON objects
+  - have a parent_asin and a title
+  - are not duplicates of a product already kept
+  - have a valid price
+  - are not kids' products (optional, on by default)
+It stops once --max-items products are kept (0 = no limit).
+
+Pass 2 reads the reviews file and keeps only reviews whose parent_asin
+belongs to a kept product.
+
+Kept records are written unchanged; prepare.py does the cleaning.
+
+Run from the project root:
+    python -m ingestion.sample
+    python -m ingestion.sample --max-items 2000
+    python -m ingestion.sample --include-kids
+"""
+
 import argparse
 import json
 import os
@@ -7,6 +29,8 @@ from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from fashion_common.catalog import parse_price
 
 load_dotenv()
 
@@ -24,21 +48,6 @@ _KIDS_WORDS = re.compile(
 )
 _KIDS_AGE = re.compile(r"\b\d{1,2}\s*-\s*\d{1,2}\s*(years|yrs)\b", re.IGNORECASE)
 _KIDS_DEPARTMENTS = ("boy", "girl", "baby", "kid", "infant", "toddler")
-
-
-def parse_price(value) -> float | None:
-    """Prices are usually floats, sometimes strings like '$12.99', often null."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        price = float(value)
-    else:
-        text = str(value).replace("$", "").replace(",", "").strip()
-        try:
-            price = float(text)
-        except ValueError:
-            return None
-    return price if price > 0 else None
 
 
 def is_kids(record: dict) -> bool:
@@ -71,6 +80,9 @@ def sample_meta(meta_path: Path, out_path: Path, max_items: int, exclude_kids: b
                 record = json.loads(line)
             except json.JSONDecodeError:
                 skipped["bad_json"] += 1
+                continue
+            if not isinstance(record, dict):
+                skipped["not_an_object"] += 1
                 continue
 
             asin = record.get("parent_asin")
@@ -123,6 +135,9 @@ def sample_reviews(reviews_path: Path, out_path: Path, kept_asins: set[str]) -> 
             try:
                 review = json.loads(line)
             except json.JSONDecodeError:
+                bad_json += 1
+                continue
+            if not isinstance(review, dict):
                 bad_json += 1
                 continue
 

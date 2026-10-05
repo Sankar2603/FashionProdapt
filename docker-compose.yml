@@ -162,6 +162,70 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  catalog:
+    build:
+      context: .
+      dockerfile: services/catalog_service/Dockerfile
+    container_name: fs-catalog
+    env_file: .env
+    environment:
+      # Inside the Docker network, services reach each other by name.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL: redis://redis:6379/1
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    container_name: fs-worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      CELERY_BROKER_URL: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+      EMBEDDING_DEVICE: cpu
+      # Reuse the model already downloaded on the host.
+      HF_HOME: /hf-cache
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    volumes:
+      - ${HF_CACHE_DIR:-hf_cache}:/hf-cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    container_name: fs-beat
+    env_file: .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=INFO",
+              "--schedule", "/tmp/celerybeat-schedule"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   redis_data:
   qdrant_data:

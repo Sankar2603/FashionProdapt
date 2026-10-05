@@ -1,3 +1,13 @@
+"""
+Loads clean products into Postgres (the source of truth).
+
+Creates the tables if they do not exist (and adds any newer columns), then
+upserts every product from data/processed/products.jsonl: new parent_asins
+are inserted, existing ones are updated. Safe to re-run.
+
+Run from the project root:
+    python -m ingestion.load_postgres
+"""
 
 import argparse
 import json
@@ -9,14 +19,16 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from fashion_common.database import make_engine, make_session_factory
-from fashion_common.models import Base, Product
+from fashion_common.models import Product, ensure_schema
 
 load_dotenv()
 
 DEFAULT_INPUT = Path("data/processed/products.jsonl")
 
-# Columns we fill from the JSONL file. Timestamps are set by Postgres.
-COLUMNS = [c.name for c in Product.__table__.columns if c.name not in ("created_at", "updated_at")]
+# Columns we fill from the JSONL file. Timestamps are set by Postgres, and
+# source_updated_at belongs to the webhook flow, so the batch load leaves it alone.
+SKIP_COLUMNS = {"created_at", "updated_at", "source_updated_at"}
+COLUMNS = [c.name for c in Product.__table__.columns if c.name not in SKIP_COLUMNS]
 # On conflict, update everything except the primary key.
 UPDATE_COLUMNS = [c for c in COLUMNS if c != "parent_asin"]
 
@@ -51,8 +63,8 @@ def main() -> None:
     engine = make_engine()
     Session = make_session_factory(engine)
 
-    # Create the table if it doesn't exist (no-op if it does).
-    Base.metadata.create_all(engine)
+    # Create missing tables / columns (no-op if they exist).
+    ensure_schema(engine)
 
     start = time.perf_counter()
     processed = 0
