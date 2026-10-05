@@ -57,4 +57,4 @@ async def search(body: SearchRequest, request: Request) -> SearchResponse:
         results=[Product(**p) for p in result["products"]],
         degraded=result["degraded"],
         latency_ms=Latency(**result["latency"]),
-    )
+    )   
