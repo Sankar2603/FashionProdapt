@@ -80,6 +80,12 @@ All ports are bound to `127.0.0.1`.
 
 If a stage fails, the search still answers where possible: the Query Service falling back to rules, or rerank being skipped, is reported in `degraded`; only a retrieval failure returns 503.
 
+## Sample output
+
+![Search for a vague cold-weather request](docs/images/sample-search.png)
+
+*"give me something to wear during a very cold weather"* names no product, colour or budget. The LLM turns it into **warm winter coat** (language `en`, parsed by LLM), and every result is a winter coat or jacket. Each card shows price, rating, relevance score and ASIN; the correlation ID traces the request through every service log.
+
 ## How live updates work
 
 1. A signed webhook (`product.upserted` / `product.deleted`, full product snapshot) reaches the Catalog Service. The HMAC-SHA256 signature and a 5-minute timestamp window are checked.
