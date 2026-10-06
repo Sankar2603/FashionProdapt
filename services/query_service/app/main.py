@@ -4,7 +4,9 @@ Query Service (port 8001).
 POST /parse: turns what the user typed into a structured search:
   1. cache lookup (Redis)
   2. regex extracts the max price (code owns numbers)
-  3. LLM (LangChain structured output) writes an English search phrase
+  3. LLM (LangChain structured output) writes an English search phrase; if the
+     regex found no price, the LLM's proposed price is used only after
+     verify_llm_price() checks it and converts it to USD
   4. if the LLM fails, times out or returns invalid data -> rule-based fallback
   5. LLM results are cached
 """
@@ -15,7 +17,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
-from fashion_common.query_rules import extract_price, rule_parse
+from fashion_common.query_rules import extract_price, rule_parse, verify_llm_price
 from fashion_common.service_app import create_app
 
 from app.cache import IntentCache, cache_key
@@ -54,8 +56,9 @@ async def parse(body: ParseRequest, request: Request) -> ParseResponse:
         logger.info("parsed", extra={"source": cached["source"], "cache_hit": True, "parse_ms": parse_ms})
         return ParseResponse(**cached, cache_hit=True, parse_ms=parse_ms)
 
-    # 2. Price: always from the regex, never from the LLM.
+    # 2. Price: the regex always wins.
     max_price, _ = extract_price(body.query)
+    price_source = "regex" if max_price is not None else None
 
     # 3. LLM, with 4. fallback
     result = None
@@ -68,6 +71,14 @@ async def parse(body: ParseRequest, request: Request) -> ParseResponse:
         except Exception as exc:
             logger.warning("llm failed; using rules", extra={"error": type(exc).__name__,
                                                              "detail": str(exc)[:200]})
+    # The LLM may only fill a price the regex missed, and only if code verifies it.
+    if result is not None and max_price is None and intent.max_price is not None:
+        verified = verify_llm_price(body.query, intent.max_price, intent.currency)
+        if verified is not None:
+            max_price, price_source = verified, "llm"
+        else:
+            logger.warning("llm price rejected", extra={"proposed_amount": intent.max_price,
+                                                        "proposed_currency": intent.currency})
     if result is None:
         fallback = rule_parse(body.query)
         result = {"search_query": fallback["search_query"],
@@ -81,6 +92,7 @@ async def parse(body: ParseRequest, request: Request) -> ParseResponse:
         "currency": "USD",
         "language": result["language"],
         "source": result["source"],
+        "price_source": price_source,
     }
 
     # 5. Cache only LLM answers.
@@ -89,5 +101,6 @@ async def parse(body: ParseRequest, request: Request) -> ParseResponse:
 
     parse_ms = round((time.perf_counter() - start) * 1000, 1)
     logger.info("parsed", extra={"source": result["source"], "cache_hit": False,
-                                 "max_price": max_price, "parse_ms": parse_ms})
+                                 "max_price": max_price, "price_source": price_source,
+                                 "parse_ms": parse_ms})
     return ParseResponse(**response, cache_hit=False, parse_ms=parse_ms)

@@ -28,7 +28,7 @@ logger = logging.getLogger("query_service.llm")
 
 # Bump this whenever the prompt changes: it is part of the cache key, so old
 # cached answers from the previous prompt are not reused.
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 SYSTEM_PROMPT = """You convert online fashion shopping queries into a product search phrase.
 
@@ -38,7 +38,10 @@ Rules:
 - Translate to English if the query is in another language.
 - Keep brand and model names exactly as written (e.g. "Nike Air Max", "Levi's 501").
 - Never include prices, budgets, currency or numbers about money in search_query.
-- language: the ISO 639-1 code of the user's language (en, es, hi, ...)."""
+- language: the ISO 639-1 code of the user's language (en, es, hi, ...).
+- max_price: the shopper's upper budget limit as a plain number, in any language
+  ('moins de 40 dollars', 'unter 50 Euro', '500 रुपये से कम'). Null if there is no upper limit.
+- currency: the ISO 4217 code of that budget."""
 
 
 def build_llm():

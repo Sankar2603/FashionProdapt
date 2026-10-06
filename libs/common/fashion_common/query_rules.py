@@ -9,6 +9,10 @@ removed from the text. Code owns numbers; the LLM never does.
 
 rule_parse(): the fallback used when the LLM is unavailable. It searches with
 the user's own words minus the price phrase.
+
+verify_llm_price(): when the regex finds no price, the LLM may PROPOSE one (any
+language); code accepts it only if the number literally appears in the query
+and the currency is known, then converts it to USD.
 """
 
 import re
@@ -65,3 +69,51 @@ def rule_parse(query: str) -> dict:
         "max_price": max_price,
         "language": guess_language(query),
     }
+
+
+# Fixed, approximate rates to USD (the catalogue is priced in USD).
+# In production these would come from a rates service.
+CURRENCY_TO_USD = {
+    "USD": 1.0, "EUR": 1.08, "GBP": 1.27, "INR": 0.012, "CAD": 0.73,
+    "AUD": 0.66, "JPY": 0.0067, "MXN": 0.055, "BRL": 0.18,
+}
+
+_ANY_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _numbers_in(query: str) -> list[float]:
+    """Every number written in the query. A comma followed by 1-2 digits is a
+    decimal separator ("19,99" = 19.99); otherwise thousands ("1,500" = 1500)."""
+    numbers = []
+    for token in _ANY_NUMBER.findall(query):
+        if "," in token:
+            whole, fraction = token.split(",")
+            token = f"{whole}.{fraction}" if len(fraction) <= 2 else whole + fraction
+        numbers.append(float(token))
+    return numbers
+
+
+def verify_llm_price(query: str, amount: float | None, currency: str | None) -> float | None:
+    """
+    Accept a max price proposed by the LLM only if code can verify it.
+    Returns the budget in USD, or None to reject (no price filter is applied).
+
+    Accepted only when ALL hold:
+      a. amount is a number > 0 and < 100000
+      b. the amount literally appears in the query as digits (so the LLM can't invent one)
+      c. the currency (USD if not given) is in CURRENCY_TO_USD
+    Never raises.
+    """
+    try:
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            return None
+        if not 0 < amount < 100_000:
+            return None
+        if not any(abs(n - amount) < 1e-9 for n in _numbers_in(query)):
+            return None
+        rate = CURRENCY_TO_USD.get((currency or "USD").strip().upper())
+        if rate is None:
+            return None
+        return round(amount * rate, 2)
+    except Exception:
+        return None

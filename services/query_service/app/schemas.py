@@ -16,7 +16,7 @@ class ParseRequest(BaseModel):
 
 
 class LLMIntent(BaseModel):
-    """What the LLM must return. Kept small on purpose: no prices, no numbers."""
+    """What the LLM must return. Its max_price is only a proposal: code verifies it."""
 
     search_query: str = Field(
         ...,
@@ -33,14 +33,31 @@ class LLMIntent(BaseModel):
         max_length=20,
         description="ISO 639-1 code of the language the user wrote in, e.g. en, es, hi.",
     )
+    max_price: float | None = Field(
+        None,
+        description=(
+            "The shopper's MAXIMUM budget as a number, only if they state an upper limit "
+            "(under, below, less than, up to, at most, max, within, or the same idea in any "
+            "language). Null if no budget, or if the price is not an upper limit (over, "
+            "around, about, from)."
+        ),
+    )
+    currency: str | None = Field(
+        None,
+        description=(
+            "ISO 4217 code of that budget's currency (USD, EUR, GBP, INR...). Null if no "
+            "budget. '$' or 'dollars' means USD."
+        ),
+    )
 
 
 class ParseResponse(BaseModel):
     original_query: str
     search_query: str          # English phrase for the Retrieval Service
-    max_price: float | None    # from regex only, never from the LLM
+    max_price: float | None    # always USD: regex, or an LLM proposal verified by code
     currency: str = "USD"
     language: str
     source: Literal["llm", "rules"]
+    price_source: Literal["regex", "llm"] | None = None
     cache_hit: bool
     parse_ms: float
