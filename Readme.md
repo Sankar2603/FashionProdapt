@@ -183,11 +183,7 @@ Every service exposes `GET /health`. Errors share one shape: `{"error": {"code",
 | Intent quality (key words kept, language correct, no price leak) | **100%** (30/30, all parsed by the LLM) |
 | nDCG@5, retrieval order → after rerank | **0.653 → 0.742** (lift **+0.089**) |
 | Rerank better / same / worse | 16 / 6 / 7 of 29 queries |
-| 95% bootstrap CI of the lift | **[+0.015, +0.167]**: reliably positive |
 | Recall@20 (retrieval) | 0.690 |
-| Price-limit violations | 0 |
-| Catalogue gaps | 1 / 30 (`red saree`) |
-| Latency p50 / p95 (CPU, intent cached) | 9.9 s / 11.8 s, of which rerank ~9.5 s |
 
 Reproduce:
 ```powershell
@@ -198,23 +194,31 @@ python -m eval.run_eval --agreement  # judge-vs-human agreement after filling sp
 
 ## Key design decisions
 
-| Decision | Why |
-| --- | --- |
-| Postgres as source of truth, Qdrant as a derived index | Transactions, row locks, constraints and conditional writes for live updates; Qdrant can always be rebuilt |
-| Search reads only Qdrant | Everything needed (filters, rerank text, rating, display fields) is in the payload; no database on the hot path |
-| LLM proposes the budget, code verifies it | Budgets in any language, but a price becomes a hard filter, so it must be exact: the regex wins, an LLM price must appear verbatim in the query, currency conversion is done by code, and anything unverified means no filter |
-| Hybrid dense + sparse with RRF | Meaning *and* exact words (brands); ranks are comparable where raw scores aren't |
-| Filter inside the vector search | Every candidate already satisfies the budget; filtering afterwards could leave too few |
-| Two stages: bi-encoder → cross-encoder | Fast recall over the catalogue, precise ordering of the top 20 |
-| Bayesian rating, at most +0.1 | One 5★ review can't beat hundreds of 4.5★; relevance always comes first |
-| `content_hash` excludes price and ratings | Price changes are payload-only updates; only text changes re-embed |
-| Idempotency key in the same transaction; `source_updated_at` ordering | Retries are harmless; late events can't overwrite newer data |
-| Jobs carry only the product ID | The worker always syncs the latest state, so duplicate or reordered jobs converge |
-| Reconciliation sweeps | Postgres and Qdrant converge even after lost jobs or outages |
-| Result cache keyed by catalogue version | Instant repeats without ever serving a stale price |
-| Alias over versioned collections | Zero-downtime reindex (`scripts/switch_alias.py`) |
-| Fixed pipeline, not an agent | Predictable, testable, no LLM calls spent on orchestration |
-| LangChain only for structured output, isolated in `llm.py` | Easy Groq/Ollama switch; replaceable by Instructor or the OpenAI-compatible SDK in one file |
+### Models and tools
+
+| Choice | Alternatives considered | Why this one |
+| --- | --- | --- |
+| **LLM:** `gpt-oss-120b` on Groq, `reasoning_effort=low` | Llama 3.3 70B (not available on our Groq plan), Qwen3 32B, a local Ollama model | Reliable structured output and strong multilingual understanding (100% intent quality in our eval) at ~0.6 s median on Groq. Ollama stays a one-line config switch for offline use |
+| **Embeddings:** BGE-M3 | multilingual-e5-large, OpenAI `text-embedding-3` | One model gives **both** dense and sparse vectors, so hybrid search needs no second model; 100+ languages; runs locally, with no per-query API cost and no product data leaving the system. e5 is dense-only; API embeddings add latency, cost and lock-in |
+| **Reranker:** `bge-reranker-v2-m3` | `ms-marco-MiniLM` cross-encoder, Cohere Rerank API | Multilingual (MiniLM is English-only) and local (no API dependency on the hot path). Measured lift: nDCG@5 0.653 → 0.742. Called through `transformers` directly instead of FlagEmbedding's wrapper: identical scores, less per-call overhead |
+| **Vector database:** Qdrant | FAISS, pgvector | Named dense + sparse vectors, RRF fusion and payload filters run **inside one query**; aliases allow zero-downtime reindexing. FAISS is a library with no filtering or live-update service; pgvector would need hybrid fusion written by hand |
+| **Queue:** Celery + Redis | RQ, Kafka | Retries with backoff, late acknowledgement and scheduled jobs (beat) are built in. RQ lacks scheduling; Kafka is far more infrastructure than this event volume needs |
+| **LLM framework:** LangChain, for structured output only | Instructor, the plain OpenAI-compatible SDK | One call gives a validated Pydantic object, plus an easy Groq ↔ Ollama switch. Isolated in `llm.py`, so swapping it is a one-file change |
+| **Frontend:** Streamlit | React | All Python, fast to build, and it runs server-side, so the webhook secret never reaches the browser |
+
+### Architecture
+
+| Decision | Alternative | Why this one |
+| --- | --- | --- |
+| Postgres as source of truth, Qdrant as a derived index | Updating JSON files or Qdrant directly | Transactions, row locks, constraints and conditional writes make live updates safe; Qdrant can always be rebuilt from Postgres |
+| Search reads only Qdrant | Joining Postgres at query time | Filters, rerank text, rating and display fields all live in the payload: no database on the hot path |
+| LLM proposes the budget, code verifies it | Regex only, or trusting the LLM | Budgets in any language, but the price is a hard filter, so it must be exact: the regex wins; an LLM price must appear verbatim in the query; currency conversion is done in code; anything unverified means no filter |
+| Hybrid dense + sparse, fused with RRF | Dense only | Dense catches meaning ("breezy top" ≈ "lightweight blouse"), sparse catches exact words like brands; RRF combines ranks, which are comparable where raw scores aren't |
+| Filter inside the vector search | Filter after retrieving | Every candidate already fits the budget; filtering afterwards can leave too few results |
+| Two stages: bi-encoder → cross-encoder | Cross-encoder over everything | The cross-encoder is precise but too slow for the whole catalogue, so it reorders only the top 20 |
+| Bayesian rating, adds at most +0.1 | Raw average rating | One 5★ review can't beat hundreds of 4.5★, and relevance always comes first |
+| `content_hash` excludes price and ratings | Re-embed on every change | Price and rating changes are payload-only updates; only text changes run the embedding model |
+| Fixed pipeline | An LLM agent orchestrating the steps | The steps never change: a pipeline is predictable, testable and spends no LLM calls on orchestration |
 
 ## Project structure
 
