@@ -99,6 +99,75 @@ The same model embeds products (offline and in the worker) and queries (Retrieva
 
 **LangChain (only for structured output).** `ChatGroq(...).with_structured_output(LLMIntent)` turns a Pydantic model into the schema the LLM must fill and validates the reply. Isolated in one file (`query_service/app/llm.py`); no chains or agents. *Considered:* Instructor or the plain OpenAI-compatible SDK, either a one-file swap.
 
+### 3.2.1 Prompts and model inputs
+
+Two models take a written prompt (the query parser and the eval judge, both gpt-oss-120b). The two BGE models take no prompt, only a fixed input format.
+
+**Query parser** (`query_service/app/llm.py`). Messages: this system prompt, then the shopper's raw query as the human message.
+
+```text
+You convert online fashion shopping queries into a product search phrase.
+
+Rules:
+- search_query: a short ENGLISH phrase (2 to 10 words) naming the product the user wants,
+  with useful details: item type, material, style, occasion, season, colour, brand.
+- Translate to English if the query is in another language.
+- Keep brand and model names exactly as written (e.g. "Nike Air Max", "Levi's 501").
+- Never include prices, budgets, currency or numbers about money in search_query.
+- language: the ISO 639-1 code of the user's language (en, es, hi, ...).
+- max_price: the shopper's upper budget limit as a plain number, in any language
+  ('moins de 40 dollars', 'unter 50 Euro', '500 रुपये से कम'). Null if there is no upper limit.
+- currency: the ISO 4217 code of that budget.
+```
+
+The reply must fill the `LLMIntent` Pydantic schema. Its field descriptions are sent to the model as part of the schema, so they act as a second layer of instructions:
+
+| Field | Constraint / instruction |
+| --- | --- |
+| `search_query` | 2–120 chars; English; no prices, budgets or currency |
+| `language` | ISO 639-1 code |
+| `max_price` | Only an upper limit (under, below, up to, within…); null for "over", "around", "from" |
+| `currency` | ISO 4217; `$` or "dollars" means USD |
+
+Design points:
+- **The LLM proposes, code decides.** A regex runs first; `max_price` from the LLM is used only if that number appears as digits in the query and the currency is known, then converted to USD in code.
+- **Price is stripped from the phrase**, so the budget acts as a hard filter rather than words to match.
+- **Versioned prompt.** `PROMPT_VERSION = "v2"` is part of the intent cache key, so editing the prompt never serves answers cached under the old one.
+- **Deterministic and fast:** `temperature=0`, `reasoning_effort=low`, 8 s timeout; on any failure the rule-based parser answers instead.
+
+**Eval judge** (`eval/run_eval.py`). Same model, its own prompt:
+
+```text
+You judge product search results for an online fashion store.
+
+For the shopper's query, give EACH product a relevance label:
+  2 = exactly what the shopper asked for: right item type AND the key attributes
+      they mentioned (material, colour, gender, style, occasion, brand).
+  1 = partly right: right item type but misses an attribute, or a closely related
+      item that could still satisfy the shopper.
+  0 = wrong item type or not useful for this query.
+
+Ignore price completely (it is checked separately).
+The query may be in any language; judge by its meaning.
+Return one label for every product id you are given, with a reason of at most 12 words.
+```
+
+The human message is `Shopper's query: <query>` followed by up to 15 numbered products, each the first 300 characters of its `search_text`. The output schema is `JudgeBatch`: a list of `{id, label (0–2), reason}`. Price is excluded so the judge measures relevance only; the budget is checked separately by the price-accuracy metric. Labels are cached, and a random sample is written out for hand checking.
+
+**BGE-M3 input** (`fashion_common/catalog.py`, `build_search_text`). Every product is embedded from the same template, used offline, in the worker and in the Catalog Service:
+
+```text
+Title: <title>
+Category: <category>
+Brand: <store>
+Features: <features>
+Description: <description>
+```
+
+Empty fields are skipped, and the input is cut at 512 tokens. Price and ratings are left out on purpose: they change often and don't describe the item, and leaving them out means a price change is a payload update, not a re-embed. Queries are embedded as the LLM's English phrase with no instruction prefix; BGE-M3 doesn't need one, unlike older BGE or E5 models.
+
+**bge-reranker-v2-m3 input** (`rerank_service/app/reranker.py`). The query and each candidate's `search_text` are tokenised as one pair (`<s> query </s></s> product text </s>`), capped at 256 tokens with `truncation="longest_first"`, so the long product text is cut and the short query stays whole. The output logit goes through a sigmoid to give a 0–1 relevance score.
+
 ### 3.3 Services
 
 **FastAPI + Uvicorn.** Five services (gateway 8000, query 8001, catalog 8002, retrieval 8003, rerank 8004). All are built with one shared factory, `create_app()`, which adds:

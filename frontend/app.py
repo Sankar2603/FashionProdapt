@@ -44,8 +44,7 @@ def show_error(err: api.ApiError) -> None:
         wait = f" Try again in {err.retry_after} s." if err.retry_after else ""
         st.warning(f"Too many searches (30 per minute).{wait}")
     elif err.code == "retrieval_unavailable":
-        st.error("Search is unavailable right now (the retrieval service is down). "
-                 "Check the System page.")
+        st.error("Search is unavailable right now (the retrieval service is down).")
     elif err.code == "timeout":
         st.error("The search took longer than 30 s. The reranker may be overloaded; try again.")
     elif err.code == "unreachable":
@@ -59,7 +58,6 @@ def show_error(err: api.ApiError) -> None:
 
 
 st.title("👗 FashionRec")
-st.caption("Semantic fashion search in any language: LLM intent → hybrid retrieval → rerank.")
 
 st.session_state.setdefault("query", "")
 st.session_state.setdefault("run_search", False)

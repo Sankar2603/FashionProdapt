@@ -6,8 +6,6 @@ import api
 
 st.set_page_config(page_title="Admin · FashionRec", page_icon="🛠️", layout="wide")
 st.title("🛠️ Catalogue admin")
-st.caption("Every action sends a signed webhook to the Catalog service. The worker syncs it "
-           "into search within about a second, so run the same search again to see the change.")
 
 
 def load(asin: str) -> None:
@@ -190,4 +188,3 @@ with st.expander("➕ Create a new product", expanded=not product):
                     category=category.strip(), image_url=image_url.strip(),
                     description=description.strip(), features=features.strip(), **ratings)
                 st.rerun()
-    st.caption("A random `TEST…` ASIN is generated. Search for the title to see it appear.")
