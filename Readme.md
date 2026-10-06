@@ -1,6 +1,6 @@
 # FashionRec: multilingual semantic fashion search with a live catalogue
 
-FashionRec is a **multilingual** semantic fashion search: it turns a shopper's free-text request, in the shopper's own language, into the five most relevant, affordable and well-rated products from the [Amazon Reviews 2023 "Amazon Fashion"](https://amazon-reviews-2023.github.io/) catalogue, and keeps those results current as products are added, repriced or removed.
+FashionRec is a **multilingual** semantic fashion search: it turns a shopper's free-text request, in the shopper's own language, into the five most relevant, affordable and well-rated products from the [Amazon Reviews 2023 "Amazon Fashion"](https://amazon-reviews-2023.github.io/) catalogue, and keeps those results current as products are added, repriced or removed. It indexes **45,993 products**: every product in the Amazon Fashion file with a valid price, with kids' items excluded.
 
 Built for the Prodapt hiring hackathon as a set of Dockerised microservices.
 
@@ -118,7 +118,7 @@ python scripts/check-infra.py
 
 ### 3. Ingest the catalogue
 ```powershell
-python -m ingestion.sample                 # 5,000 products; use --max-items 0 for all
+python -m ingestion.sample --max-items 0   # full catalogue (~46k products); --max-items 5000 for a quick trial
 python -m ingestion.prepare                # clean, enrich, validate
 python -m ingestion.load_postgres          # into Postgres
 python -m ingestion.index_qdrant           # embed with BGE-M3, build Qdrant, set the alias
@@ -172,18 +172,20 @@ Every service exposes `GET /health`. Errors share one shape: `{"error": {"code",
 
 ## Evaluation
 
-30 hand-written multilingual test queries (the current set covers English, Spanish and Hindi; budgets in many formats; brands; a typo; a vague request; a prompt-injection attempt), run end to end against the live services.
+36 hand-written multilingual test queries (English, Spanish, Hindi, French, German, Portuguese and Italian; budgets written as symbols, numbers and words, including a rupee budget converted to USD; brands; a typo; a vague request; a prompt-injection attempt), run end to end against the live services.
 
 - **Relevance labels:** an LLM judge (`gpt-oss-120b`, strict 0/1/2 rubric, structured output) labels every product in a pool built from hybrid, dense-only and sparse-only results. A balanced sample of labels is checked by hand (`spot_check.csv`).
 - **Recall** is relative to that pool. Queries with no relevant product anywhere in the pool are reported as catalogue gaps, not ranking failures.
 
 | Metric | Result |
 | --- | --- |
-| Price accuracy | **100%** (30/30) |
-| Intent quality (key words kept, language correct, no price leak) | **100%** (30/30, all parsed by the LLM) |
-| nDCG@5, retrieval order → after rerank | **0.653 → 0.742** (lift **+0.089**) |
-| Rerank better / same / worse | 16 / 6 / 7 of 29 queries |
+| Price accuracy | **100%** (36/36) |
+| Intent quality (key words kept, language correct, no price leak) | **100%** (36/36, all parsed by the LLM) |
+| nDCG@5, retrieval order → after rerank | **0.643 → 0.713** (lift **+0.069**) |
+| Rerank better / same / worse | 21 / 5 / 9 of 35 queries |
 | Recall@20 (retrieval) | 0.690 |
+| Latency, LLM parse p50 / p95 | 0.68 s / 1.6 s |
+| Latency, full search p50 / p95 (CPU; rerank ~8.4 s of it) | 8.7 s / 9.6 s |
 
 Reproduce:
 ```powershell
@@ -191,6 +193,16 @@ python -m eval.run_eval              # full run (~15–30 min), writes eval/resu
 python -m eval.confidence            # win/tie/loss + bootstrap CI
 python -m eval.run_eval --agreement  # judge-vs-human agreement after filling spot_check.csv
 ```
+
+## Limitations and next steps
+
+| Limitation | Effect today | Next step |
+| --- | --- | --- |
+| Reranking runs on CPU | ~8.4 s of each ~8.7 s search; close to the 10 s rerank timeout | GPU build (`docker-compose.gpu.yml`, well under 1 s) or an ONNX int8 reranker; raise `RERANK_TIMEOUT_S` meanwhile |
+| Catalogue coverage | Only products with a listed price are indexed (45,993; kids' items excluded), so rare types can be missing: 1 of 36 eval queries (sarees) had no relevant product | Add more catalogue sources and categories; index unpriced products for browsing without a price filter |
+| Budget verification needs digits | "under forty dollars" (number words) gets no price filter; currency rates are fixed | Add a multilingual number parser (e.g. Microsoft Recognizers-Text) and a live exchange-rate source |
+| No outfit assembly | Vague occasion queries ("beach outfit") return relevant, varied items, not a coordinated outfit | Outfit construction on top of search |
+| Evaluation scale | 36 queries written by the author; LLM judge with a human spot-check; recall is relative to a pooled set | Grow the multilingual set (32 more queries in 16 languages are ready) and add independent labels |
 
 ## Key design decisions
 
@@ -200,7 +212,7 @@ python -m eval.run_eval --agreement  # judge-vs-human agreement after filling sp
 | --- | --- | --- |
 | **LLM:** `gpt-oss-120b` on Groq, `reasoning_effort=low` | Llama 3.3 70B (not available on our Groq plan), Qwen3 32B, a local Ollama model | Reliable structured output and strong multilingual understanding (100% intent quality in our eval) at ~0.6 s median on Groq. Ollama stays a one-line config switch for offline use |
 | **Embeddings:** BGE-M3 | multilingual-e5-large, OpenAI `text-embedding-3` | One model gives **both** dense and sparse vectors, so hybrid search needs no second model; 100+ languages; runs locally, with no per-query API cost and no product data leaving the system. e5 is dense-only; API embeddings add latency, cost and lock-in |
-| **Reranker:** `bge-reranker-v2-m3` | `ms-marco-MiniLM` cross-encoder, Cohere Rerank API | Multilingual (MiniLM is English-only) and local (no API dependency on the hot path). Measured lift: nDCG@5 0.653 → 0.742. Called through `transformers` directly instead of FlagEmbedding's wrapper: identical scores, less per-call overhead |
+| **Reranker:** `bge-reranker-v2-m3` | `ms-marco-MiniLM` cross-encoder, Cohere Rerank API | Multilingual (MiniLM is English-only) and local (no API dependency on the hot path). Measured lift: nDCG@5 0.643 → 0.713. Called through `transformers` directly instead of FlagEmbedding's wrapper: identical scores, less per-call overhead |
 | **Vector database:** Qdrant | FAISS, pgvector | Named dense + sparse vectors, RRF fusion and payload filters run **inside one query**; aliases allow zero-downtime reindexing. FAISS is a library with no filtering or live-update service; pgvector would need hybrid fusion written by hand |
 | **Queue:** Celery + Redis | RQ, Kafka | Retries with backoff, late acknowledgement and scheduled jobs (beat) are built in. RQ lacks scheduling; Kafka is far more infrastructure than this event volume needs |
 | **LLM framework:** LangChain, for structured output only | Instructor, the plain OpenAI-compatible SDK | One call gives a validated Pydantic object, plus an easy Groq ↔ Ollama switch. Isolated in `llm.py`, so swapping it is a one-file change |
