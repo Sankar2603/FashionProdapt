@@ -24,27 +24,28 @@ Built for the Prodapt hiring hackathon as a set of Dockerised microservices.
 flowchart LR
     subgraph Offline["Offline ingestion (once)"]
         RAW[Raw JSONL<br/>meta + reviews] --> ING[sample → prepare → load]
+        IDX[index_qdrant<br/>embed with BGE-M3]
     end
-    ING --> PG[(Postgres<br/>source of truth)]
-    PG --> EMB[Embed with BGE-M3<br/>index_qdrant / worker]
-    EMB --> QD[(Qdrant<br/>vectors + payload)]
-
     subgraph Live["Live updates"]
         SELLER[Signed webhook /<br/>Admin page] --> CAT[Catalog :8002]
-        CAT --> PG
-        CAT --> Q[[Redis queue<br/>catalog_sync]]
-        Q --> W[Celery worker + beat]
+        CAT -->|enqueue ID| Q[[Redis db 1<br/>catalog_sync queue]]
+        Q --> W[Celery worker + beat<br/>reads row, embeds with BGE-M3]
     end
-    W --> PG
-    W --> QD
-
     subgraph Search["Search (every query)"]
         UI[Streamlit :8501] --> GW[Gateway :8000]
         GW -->|1| QS[Query :8001<br/>LLM + verified price]
         GW -->|2| RET[Retrieval :8003<br/>hybrid search]
         GW -->|3| RR[Rerank :8004<br/>cross-encoder + MMR]
     end
-    RET --> QD
+    ING -->|load| PG[(Postgres<br/>source of truth)]
+    CAT -->|write| PG
+    PG -->|read rows| IDX
+    PG -.-> W
+    IDX -->|vectors + payload| QD[(Qdrant<br/>vectors + payload)]
+    W -->|upsert / payload| QD
+    RET -->|read| QD
+    GW -.->|result cache, rate limit| RC[(Redis db 0<br/>caches)]
+    QS -.->|intent cache| RC
 ```
 
 **The rule behind it:** writes go to Postgres, Qdrant is built from Postgres, and searches read only Qdrant.
