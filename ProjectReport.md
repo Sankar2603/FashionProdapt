@@ -223,25 +223,7 @@ Example: `camisa de lino para el verano por menos de $40`
 
 ---
 
-## 7. Evaluation
-
-**Method.** 36 hand-written multilingual queries: English, Spanish, Hindi, French, German, Portuguese and Italian, with budgets written as symbols, digits and words, brands, a typo, a vague request and a prompt injection. They run end to end against the live services. An LLM judge (strict 0/1/2 rubric, structured output) labels every product in a pool drawn from hybrid, dense-only and sparse-only results; a balanced sample is checked by hand.
-
-| Metric | What it measures | Result |
-| --- | --- | --- |
-| Price accuracy | Budget extracted exactly | 100% (36/36) |
-| Intent quality | Key words kept, language right, no price leak | 100% (36/36) |
-| **nDCG@5** | Are the best products at the top of the 5 shown? Graded and position-aware | 0.643 → **0.713** after rerank |
-| Recall@20 | Did retrieval keep the relevant products for the reranker? | 0.690 |
-| Latency p50 / p95 | Full search on CPU | 8.7 s / 9.6 s (rerank ~8.4 s) |
-
-**Why these metrics.** nDCG@5 rewards relevant items, rewards exact matches more than partial ones, and rewards putting them first, which is what a shopper scanning five results experiences. Precision@5 ignores order and grades, and MRR only looks at the first hit. Recall@20 judges the retrieval stage, whose job is not to lose good candidates. A bootstrap over the per-query differences confirms the rerank lift is positive.
-
-**Reproduce:** `python -m eval.run_eval`, then `python -m eval.confidence`.
-
----
-
-## 8. Key design decisions
+## 7. Key design decisions
 
 | Decision | Why |
 | --- | --- |
@@ -259,7 +241,7 @@ Example: `camisa de lino para el verano por menos de $40`
 
 ---
 
-## 9. Limitations and next steps
+## 8. Limitations and next steps
 
 | Limitation | Next step |
 | --- | --- |
@@ -287,3 +269,21 @@ Example: `camisa de lino para el verano por menos de $40`
 ```
 
 Setup, configuration and API details are in the [README](../README.md).
+
+---
+
+## 9. Evaluation
+
+**Method.** 36 hand-written multilingual queries: English, Spanish, Hindi, French, German, Portuguese and Italian, with budgets written as symbols, digits and words, brands, a typo, a vague request and a prompt injection. They run end to end against the live services. An LLM judge (strict 0/1/2 rubric, structured output) labels every product in a pool drawn from hybrid, dense-only and sparse-only results; a balanced sample is checked by hand.
+
+| Metric | What it measures | Result |
+| --- | --- | --- |
+| Price accuracy | Budget extracted exactly | 100% (36/36) |
+| Intent quality | Key words kept, language right, no price leak | 100% (36/36) |
+| **nDCG@5** | Are the best products at the top of the 5 shown? Graded and position-aware | 0.643 → **0.713** after rerank |
+| Recall@20 | Did retrieval keep the relevant products for the reranker? | 0.690 |
+| Latency p50 / p95 | Full search on CPU | 8.7 s / 9.6 s (rerank ~8.4 s) |
+
+**Why these metrics.** nDCG@5 rewards relevant items, rewards exact matches more than partial ones, and rewards putting them first, which is what a shopper scanning five results experiences. Precision@5 ignores order and grades, and MRR only looks at the first hit. Recall@20 judges the retrieval stage, whose job is not to lose good candidates. A bootstrap over the per-query differences confirms the rerank lift is positive.
+
+**Reproduce:** `python -m eval.run_eval`, then `python -m eval.confidence`.
