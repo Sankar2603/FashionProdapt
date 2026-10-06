@@ -189,11 +189,11 @@ Example: `camisa de lino para el verano por menos de $40`
 
 **Sample output.** Two requests that name no specific product.
 
-![Search for a vague cold-weather request](images/sample-search.png)
+![Search for a vague cold-weather request](docs/images/sample-search.png)
 
 *"give me something to wear during a very cold weather"* names no product, colour or budget. The LLM turns it into **warm winter coat** (language `en`, parsed by LLM), and every result is a winter coat or jacket. Each card shows price, rating, relevance score and ASIN; the correlation ID traces the request through every service log.
 
-![Search for a beach outfit](images/sample-beach.png)
+![Search for a beach outfit](docs/images/sample-beach.png)
 
 *"give me a costume for the beach"* is understood as **beach cover-up dress** (`en`, parsed by LLM). All five results are beach cover-ups or beach dresses, and MMR keeps them varied in style and colour rather than five near-identical items.
 
@@ -225,7 +225,7 @@ Example: `camisa de lino para el verano por menos de $40`
 
 **Admin page.** Every action sends a signed webhook through this same path, so the frontend tests the real flow. Look up a product by ASIN to reprice, edit, delete or restore it, or create a new one:
 
-![Catalogue admin: create a product](images/admin-create.png)
+![Catalogue admin: create a product](docs/images/admin-create.png)
 
 Title, brand, category, features and description are embedded for search. Ratings are simulated (what a store platform would report); a brand-new product with 0 ratings gets the catalogue mean score. Running the same search again about a second later shows the change.
 
