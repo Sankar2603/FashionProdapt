@@ -7,16 +7,22 @@ webhook would get a different content_hash, and the worker would re-embed it
 for no reason.
 
 Also holds the names the Catalog Service and the Celery worker agree on
-(task name and queue).
+(task name and queue), and the catalogue version counter (bump_catalog_version)
+that invalidates the Gateway's search-result cache whenever what search can
+see changes.
 """
 
 import hashlib
 import html
+import os
 import re
 
 # Celery contract between the Catalog Service (sender) and the worker (Step 11).
 SYNC_TASK_NAME = "worker.sync_product"
 SYNC_QUEUE = "catalog_sync"
+
+# Redis key (db 0): a counter that goes up whenever what search can see changes.
+CATALOG_VERSION_KEY = "catalog:version"
 
 # Long text slows down embedding and adds little meaning.
 FEATURES_MAX_CHARS = 1000
@@ -139,3 +145,21 @@ def finalize_product(product: dict, C: float, m: float) -> dict:
     product["content_hash"] = content_hash(product["search_text"])
     product.setdefault("is_deleted", False)
     return product
+
+
+# ---------------------------------------------------------------------------
+# Catalogue version (search-result cache invalidation)
+# ---------------------------------------------------------------------------
+def bump_catalog_version(client=None) -> bool:
+    """Increment the catalogue version so every cached search result becomes stale.
+    Pass a redis.Redis client to reuse a connection; otherwise REDIS_URL is used.
+    Never raises: if Redis is down, cached results simply expire by their TTL."""
+    try:
+        if client is None:
+            import redis
+            client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+                                          socket_timeout=1, socket_connect_timeout=1)
+        client.incr(CATALOG_VERSION_KEY)
+        return True
+    except Exception:
+        return False

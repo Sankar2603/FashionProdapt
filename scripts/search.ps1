@@ -9,6 +9,7 @@ $r = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/search" `
 
 Write-Host "`nCorrelation ID: $($r.correlation_id)"
 Write-Host "Intent: '$($r.intent.search_query)'  max_price=$($r.intent.max_price)  language=$($r.intent.language)  source=$($r.intent.source)"
+if ($r.cached) { Write-Host "Served from the search-result cache" -ForegroundColor Green }
 if ($r.degraded.Count -gt 0) { Write-Host "Degraded: $($r.degraded -join ', ')" -ForegroundColor Yellow }
 $r.results | Select-Object relevance, price, title | Format-Table -AutoSize
 $r.latency_ms

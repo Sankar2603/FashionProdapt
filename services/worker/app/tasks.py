@@ -16,7 +16,7 @@ import redis
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from sqlalchemy.exc import OperationalError
 
-from fashion_common.catalog import SYNC_QUEUE, SYNC_TASK_NAME
+from fashion_common.catalog import SYNC_QUEUE, SYNC_TASK_NAME, bump_catalog_version
 from fashion_common.middleware import correlation_id_var
 
 from app.celery_app import BROKER_URL, celery_app
@@ -47,6 +47,14 @@ def get_redis() -> redis.Redis:
     return redis.Redis.from_url(BROKER_URL)
 
 
+@lru_cache(maxsize=1)
+def get_cache_redis() -> redis.Redis:
+    # db 0, where the Gateway keeps its search-result cache (get_redis() is the
+    # broker, db 1, used for locks).
+    return redis.Redis.from_url(os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+                                socket_timeout=1, socket_connect_timeout=1)
+
+
 @celery_app.task(name=SYNC_TASK_NAME, bind=True, autoretry_for=RETRYABLE,
                  retry_backoff=2, retry_backoff_max=60, retry_jitter=True,
                  max_retries=int(os.getenv("SYNC_MAX_RETRIES", "8")))
@@ -68,6 +76,11 @@ def sync_product(self, parent_asin: str, event_id: str | None = None,
                 lock.release()
             except redis.exceptions.LockError:
                 pass   # expired already; nothing to release
+
+        # Invalidate cached search results. The bump comes AFTER the Qdrant
+        # write, so a search that sees the new version also sees the new data.
+        if result.action != "noop":
+            bump_catalog_version(get_cache_redis())
 
         logger.info("synced", extra={
             "parent_asin": parent_asin, "action": result.action,

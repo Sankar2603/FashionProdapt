@@ -6,6 +6,7 @@ import time
 from dotenv import load_dotenv
 from sqlalchemy import func, select
 
+from fashion_common.catalog import bump_catalog_version
 from fashion_common.database import make_engine, make_session_factory
 from fashion_common.embedder import Embedder
 from fashion_common.models import Product
@@ -95,6 +96,8 @@ def main() -> None:
     if not args.no_alias:
         previous = resolve_alias(client, active_alias())
         set_alias(client, active_alias(), args.collection)
+        # The alias decides what search sees: invalidate cached search results.
+        bump_catalog_version()
         print(f"\nAlias {active_alias()}: {previous or '(none)'} -> {args.collection}")
 
     print(f"\nIndexed this run:         {done:,}")

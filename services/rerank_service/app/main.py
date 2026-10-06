@@ -31,6 +31,15 @@ async def lifespan(app: FastAPI):
     logger.info("model loaded", extra={"model": app.state.reranker.model_name,
                                        "device": app.state.reranker.device,
                                        "load_s": round(time.perf_counter() - start, 1)})
+
+    # Warm-up: PyTorch's first inference is much slower than later ones (lazy
+    # kernel init, memory allocation). Score one full batch of product-length
+    # texts so the shapes real requests use are already warm.
+    t0 = time.perf_counter()
+    sample = ("Title: Lightweight linen button-down shirt\nBrand: Example\n"
+              "Features: 100% linen; breathable; relaxed fit; machine washable; " * 3)
+    app.state.reranker.score("linen summer shirt", [sample] * app.state.reranker.batch_size)
+    logger.info("model warmed up", extra={"warmup_s": round(time.perf_counter() - t0, 1)})
     yield
 
 

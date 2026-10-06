@@ -49,3 +49,6 @@ class SearchResponse(BaseModel):
     results: list[Product]
     degraded: list[str]        # which steps fell back, e.g. ["rerank_skipped"]
     latency_ms: Latency
+    # True when served from the search-result cache. On a cache hit the stage
+    # latencies are 0 and total_ms is the cache lookup time.
+    cached: bool = False

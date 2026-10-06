@@ -11,6 +11,7 @@ Settings (env):
     GROQ_API_KEY   required for groq
     OLLAMA_BASE_URL default http://127.0.0.1:11434
     LLM_TIMEOUT_S  default 8
+    LLM_MAX_RETRIES default 1 (groq): retries inside the LLM_TIMEOUT_S budget
     LLM_REASONING_EFFORT  optional, for reasoning models on Groq
                           (gpt-oss: low | medium | high). "low" keeps latency down.
 """
@@ -58,8 +59,10 @@ def build_llm():
             # Reasoning models "think" before answering; a short rewrite task
             # doesn't need much of that, and less thinking = lower latency.
             extra["reasoning_effort"] = effort
-        chat = ChatGroq(model=model, api_key=api_key, temperature=0,
-                        timeout=timeout, max_retries=0, **extra)
+        # One retry absorbs a brief 429 or server hiccup; the whole call
+        # (retries included) is still capped by LLM_TIMEOUT_S in run_llm.
+        chat = ChatGroq(model=model, api_key=api_key, temperature=0, timeout=timeout,
+                        max_retries=int(os.getenv("LLM_MAX_RETRIES", "1")), **extra)
     elif provider == "ollama":
         from langchain_ollama import ChatOllama
         chat = ChatOllama(model=model, temperature=0,

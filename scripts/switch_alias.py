@@ -9,6 +9,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from fashion_common.catalog import bump_catalog_version
 from fashion_common.vector_store import active_alias, make_client, resolve_alias, set_alias
 
 load_dotenv()
@@ -30,6 +31,11 @@ def main() -> None:
     previous = resolve_alias(client, alias)
     set_alias(client, alias, target)
     print(f"{alias}: {previous or '(none)'} -> {target} ({points:,} points)")
+    # The alias decides what search sees: invalidate cached search results.
+    if bump_catalog_version():
+        print("Search-result cache invalidated.")
+    else:
+        print("Could not reach Redis; cached search results will expire by their TTL.")
 
 
 if __name__ == "__main__":

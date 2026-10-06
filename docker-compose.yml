@@ -186,6 +186,30 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: fs-frontend
+    env_file: .env
+    environment:
+      # Inside the Docker network, services reach each other by name.
+      GATEWAY_URL: http://gateway:8000
+      QUERY_URL: http://query:8001
+      CATALOG_URL: http://catalog:8002
+      RETRIEVAL_URL: http://retrieval:8003
+      RERANK_URL: http://rerank:8004
+      CELERY_BROKER_URL: redis://redis:6379/1
+    ports:
+      - "127.0.0.1:8501:8501"
+    depends_on:
+      gateway:
+        condition: service_started
+      catalog:
+        condition: service_started
+    restart: unless-stopped
+
   worker:
     build:
       context: .
@@ -195,6 +219,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       CELERY_BROKER_URL: redis://redis:6379/1
+      # db 0: bumps the catalogue version that invalidates the search-result cache.
+      REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
       EMBEDDING_DEVICE: cpu
       # Reuse the model already downloaded on the host.

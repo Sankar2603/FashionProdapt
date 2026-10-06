@@ -51,6 +51,7 @@ TOP_N = 5           # results shown to the user
 JUDGE_CHUNK = 15    # products per judge call (keeps each call small for Groq's limits)
 TEXT_CHARS = 300    # how much of each product's search_text the judge sees
 SPOT_CHECK_SIZE = 30
+PARSE_PAUSE_S = 1.0  # pause between /parse calls, to stay under Groq's rate limit
 
 
 # ---------------------------------------------------------------------------
@@ -70,11 +71,14 @@ def post(client: httpx.Client, url: str, payload: dict, attempts: int = 5) -> di
     raise RuntimeError(f"Still rate limited after {attempts} attempts: {url}")
 
 
-def clear_intent_cache() -> int:
-    """Delete cached intents so /parse measures real LLM calls. Returns keys deleted."""
+def clear_caches() -> int:
+    """
+    Delete cached intents (so /parse measures real LLM calls) and cached search
+    results (so /search runs the full pipeline). Returns keys deleted.
+    """
     import redis
     client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"))
-    keys = list(client.scan_iter("intent:*"))
+    keys = list(client.scan_iter("intent:*")) + list(client.scan_iter("search:*"))
     if keys:
         client.delete(*keys)
     return len(keys)
@@ -247,8 +251,22 @@ def run(args) -> None:
     http = httpx.Client(timeout=60)
 
     if not args.keep_cache:
-        print(f"Cleared {clear_intent_cache()} cached intents (so parse latency is real).")
+        print(f"Cleared {clear_caches()} cached intents and search results "
+              f"(so parse latency is real and searches run the full pipeline).")
 
+    # Phase 1: parse every query BEFORE any judge call. The judge uses the same
+    # Groq account and model as the Query Service, so interleaving them made the
+    # judge use up the rate limit and /parse fell back to the rules.
+    print("Parsing all queries...")
+    parsed_by_id = {}
+    for n, case in enumerate(cases, start=1):
+        if n > 1:
+            time.sleep(PARSE_PAUSE_S)
+        parsed_by_id[case["id"]] = post(http, f"{QUERY_URL}/parse", {"query": case["query"]})
+    fallbacks = sum(1 for p in parsed_by_id.values() if p["source"] != "llm")
+    print(f"Parsed {len(cases)} queries; {fallbacks} fell back to the rules.")
+
+    # Phase 2: retrieval, search and judging.
     # Warm-up: the first search after a restart pays model warm-up costs.
     print("Warm-up search...")
     post(http, f"{GATEWAY_URL}/search", {"query": "warm up shirt", "top_n": TOP_N})
@@ -257,8 +275,8 @@ def run(args) -> None:
     for n, case in enumerate(cases, start=1):
         print(f"[{n}/{len(cases)}] {case['id']}  {case['query']}")
 
-        # 1. Parse
-        parsed = post(http, f"{QUERY_URL}/parse", {"query": case["query"]})
+        # 1. Parse (done in phase 1)
+        parsed = parsed_by_id[case["id"]]
         checks = intent_checks(case, parsed)
 
         # 2. Retrieval: hybrid (what the system uses), dense and sparse (pool only)
@@ -338,6 +356,8 @@ def write_outputs(rows: list[dict], label_cache: dict) -> None:
     price_acc = sum(r["price_ok"] for r in rows) / n
     intent_acc = sum(r["intent"]["passed"] for r in rows) / n
     llm_rows = [r for r in rows if r["source"] == "llm"]
+    llm_passed = sum(r["intent"]["passed"] for r in llm_rows)
+    llm_intent_acc = llm_passed / len(llm_rows) if llm_rows else float("nan")
     cold_parse = [r["parse_ms"] for r in rows if not r["parse_cache_hit"] and r["source"] == "llm"]
     totals = [r["latency_ms"]["total_ms"] for r in rows]
     reranks = [r["latency_ms"]["rerank_ms"] for r in rows]
@@ -362,6 +382,8 @@ def write_outputs(rows: list[dict], label_cache: dict) -> None:
         f"| Price accuracy | {price_acc:.1%} ({sum(r['price_ok'] for r in rows)}/{n}) |",
         f"| Intent quality (key words + language + no price leak) | {intent_acc:.1%} "
         f"({sum(r['intent']['passed'] for r in rows)}/{n}) |",
+        f"| Intent quality, LLM-parsed queries only | {llm_intent_acc:.1%} "
+        f"({llm_passed}/{len(llm_rows)}) |",
         f"| Parsed by the LLM (not the rules fallback) | {len(llm_rows)}/{n} |",
         f"| LLM parse latency p50 / p95 | {percentile(cold_parse, 50):.0f} ms / "
         f"{percentile(cold_parse, 95):.0f} ms |",
@@ -423,7 +445,8 @@ def write_outputs(rows: list[dict], label_cache: dict) -> None:
 
     # Short console summary
     print("\n" + "=" * 60)
-    print(f"Parser   price accuracy {price_acc:.1%}   intent quality {intent_acc:.1%}")
+    print(f"Parser   price accuracy {price_acc:.1%}   intent quality {intent_acc:.1%}"
+          f" (LLM-parsed only {llm_intent_acc:.1%}, fallbacks {n - len(llm_rows)}/{n})")
     print(f"Search   nDCG@5 {ndcg_ret:.3f} -> {ndcg_rr:.3f} (rerank lift {ndcg_rr - ndcg_ret:+.3f})"
           f"   Recall@20 {recall:.3f}")
     print(f"System   p50 {percentile(totals, 50):.0f} ms  p95 {percentile(totals, 95):.0f} ms"

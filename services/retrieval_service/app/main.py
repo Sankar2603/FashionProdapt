@@ -33,6 +33,13 @@ async def lifespan(app: FastAPI):
                                        "device": app.state.embedder.device,
                                        "load_s": round(time.perf_counter() - start, 1)})
 
+    # Warm-up: PyTorch's first inference is much slower than later ones (lazy
+    # kernel init, memory allocation). Pay that cost here, at startup, instead
+    # of on the first user's search.
+    t0 = time.perf_counter()
+    app.state.embedder.encode(["warm up query", "lightweight linen summer shirt for men"])
+    logger.info("model warmed up", extra={"warmup_s": round(time.perf_counter() - t0, 1)})
+
     app.state.qdrant = make_client()
     app.state.alias = active_alias()
     collection = resolve_alias(app.state.qdrant, app.state.alias)
