@@ -13,14 +13,6 @@ Shoppers describe what they want in their own words and language: *"camisa de li
 - **Finds** the five most relevant, affordable, well-rated products among **45,993** Amazon Fashion products.
 - **Stays current:** a price change, new product or removal is searchable about a second after it happens.
 
-| Result | Value |
-| --- | --- |
-| Price accuracy (36 multilingual test queries) | 100% |
-| Intent quality | 100% |
-| nDCG@5, retrieval → after rerank | 0.643 → 0.713 |
-| Recall@20 (retrieval) | 0.690 |
-| Webhook → searchable | ~0.1–1 s |
-
 ```mermaid
 flowchart LR
     subgraph Offline["Offline ingestion (once)"]
@@ -283,6 +275,7 @@ Setup, configuration and API details are in the [README](../README.md).
 | **nDCG@5** | Are the best products at the top of the 5 shown? Graded and position-aware | 0.643 → **0.713** after rerank |
 | Recall@20 | Did retrieval keep the relevant products for the reranker? | 0.690 |
 | Latency p50 / p95 | Full search on CPU | 8.7 s / 9.6 s (rerank ~8.4 s) |
+| Webhook → searchable | Time from a catalogue change to search seeing it | ~0.1–1 s |
 
 **Why these metrics.** nDCG@5 rewards relevant items, rewards exact matches more than partial ones, and rewards putting them first, which is what a shopper scanning five results experiences. Precision@5 ignores order and grades, and MRR only looks at the first hit. Recall@20 judges the retrieval stage, whose job is not to lose good candidates. A bootstrap over the per-query differences confirms the rerank lift is positive.
 
